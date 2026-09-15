@@ -473,6 +473,31 @@
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) 2025 opencode"]
       }
+    },
+    {
+      "license": "MIT",
+      "name": "khroma",
+      "sourceUrl": "https://github.com/fabiospampinato/khroma",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2019-present Fabio Spampinato, Andrew Maney"]
+      }
+    },
+    {
+      "name": "fastdom",
+      "sourceUrl": "https://github.com/wilsonpage/fastdom",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2016 Wilson Page <wilsonpage@me.com>"]
+      }
+    },
+    {
+      "name": "strictdom",
+      "sourceUrl": "https://github.com/wilsonpage/strictdom",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2013 Wilson Page <wilsonpage@me.com>"]
+      }
     }
   ]
 }
