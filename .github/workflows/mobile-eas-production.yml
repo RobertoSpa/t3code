@@ -141,6 +141,16 @@ jobs:
             args:
               - --filter=@t3tools/mobile...
 
+      - name: Verify v2 preview source
+        if: github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview'
+        run: |
+          node --input-type=module -e '
+            import * as environment from "./packages/contracts/src/environment.ts";
+            if (environment.ORCHESTRATION_PROTOCOL_VERSION !== 2) {
+              throw new Error("V2 previews require a v2 source branch. Select the v2 branch when running this workflow.");
+            }
+          '
+
       - name: Expose pnpm
         if: steps.expo-token.outputs.present == 'true'
         run: |
