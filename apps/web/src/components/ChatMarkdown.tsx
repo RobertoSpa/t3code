@@ -193,6 +193,7 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { MermaidDiagram } from "./MermaidDiagram";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
@@ -547,6 +548,66 @@ function extractFenceLanguage(className: string | undefined): string {
   const raw = match?.[1] ?? "text";
   // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
   return raw === "gitignore" ? "ini" : raw;
+}
+
+/** Mermaid fences render as diagrams; `mmd` is the same language under its common alias. */
+export function isMermaidFenceLanguage(language: string): boolean {
+  const normalized = language.trim().toLowerCase();
+  if (normalized === "mermaid") {
+    return true;
+  }
+  return normalized === "mmd";
+}
+
+const FENCE_LINE_REGEX = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+function parseFenceLine(line: string): { marker: string; info: string } | null {
+  const match = FENCE_LINE_REGEX.exec(line);
+  if (match === null) {
+    return null;
+  }
+  const marker = match[1];
+  if (marker === undefined) {
+    return null;
+  }
+  return { marker, info: match[2] === undefined ? "" : match[2] };
+}
+
+function isClosingFenceLine(openingMarker: string, line: string): boolean {
+  const fence = parseFenceLine(line);
+  if (fence === null) {
+    return false;
+  }
+  if (fence.marker[0] !== openingMarker[0]) {
+    return false;
+  }
+  if (fence.marker.length < openingMarker.length) {
+    return false;
+  }
+  return fence.info.trim() === "";
+}
+
+/** Uses the code node's own source range so one incomplete fence cannot hide a completed one. */
+export function isCompleteMermaidFenceAt(text: string, offset: number): boolean {
+  if (offset < 0) {
+    return false;
+  }
+  const [openingLine, ...bodyLines] = text.slice(offset).split("\n");
+  if (openingLine === undefined) {
+    return false;
+  }
+  const opening = parseFenceLine(openingLine);
+  if (opening === null) {
+    return false;
+  }
+  const language = opening.info.trim().split(/\s+/)[0];
+  if (language === undefined) {
+    return false;
+  }
+  if (!isMermaidFenceLanguage(language)) {
+    return false;
+  }
+  return bodyLines.some((line) => isClosingFenceLine(opening.marker, line));
 }
 
 const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
@@ -3177,7 +3238,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, isStreaming, text } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3185,6 +3246,34 @@ const CHAT_MARKDOWN_COMPONENTS = {
 
     const language = extractFenceLanguage(codeBlock.className);
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+    const highlightedSource = (
+      <RenderErrorBoundary
+        resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
+        fallback={<pre {...props}>{children}</pre>}
+      >
+        {/* Reserve the block's height but stay hidden until Shiki has colored
+            it, so plain text never flashes before the highlighted version. */}
+        <Suspense
+          fallback={
+            <pre {...props} className="invisible" aria-hidden>
+              {children}
+            </pre>
+          }
+        >
+          <SuspenseShikiCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            themeName={diffThemeName}
+            isStreaming={isStreaming}
+          />
+        </Suspense>
+      </RenderErrorBoundary>
+    );
+    const rendersDiagram =
+      !isStreaming &&
+      isMermaidFenceLanguage(language) &&
+      codeBlock.code.trim().length > 0 &&
+      isCompleteMermaidFenceAt(text, node?.position?.start?.offset ?? -1);
     return (
       <MarkdownCodeBlock
         code={codeBlock.code}
@@ -3192,27 +3281,16 @@ const CHAT_MARKDOWN_COMPONENTS = {
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
       >
-        <RenderErrorBoundary
-          resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
-        >
-          {/* Reserve the block's height but stay hidden until Shiki has colored
-              it, so plain text never flashes before the highlighted version. */}
-          <Suspense
-            fallback={
-              <pre {...props} className="invisible" aria-hidden>
-                {children}
-              </pre>
-            }
-          >
-            <SuspenseShikiCodeBlock
-              className={codeBlock.className}
-              code={codeBlock.code}
-              themeName={diffThemeName}
-              isStreaming={isStreaming}
-            />
-          </Suspense>
-        </RenderErrorBoundary>
+        {rendersDiagram ? (
+          <MermaidDiagram
+            key={`${resolvedTheme}:${codeBlock.code}`}
+            code={codeBlock.code}
+            theme={resolvedTheme}
+            fallback={highlightedSource}
+          />
+        ) : (
+          highlightedSource
+        )}
       </MarkdownCodeBlock>
     );
   },
