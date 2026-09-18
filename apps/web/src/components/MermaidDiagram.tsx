@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { MermaidConfig, RenderResult } from "mermaid";
+import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
 
 export type MermaidTheme = "light" | "dark";
 
@@ -335,12 +336,76 @@ export function MermaidDiagram({
     return <div ref={hostRef}>{fallback}</div>;
   }
 
+  return <MermaidDiagramView render={render} />;
+}
+
+function isActivationKey(event: KeyboardEvent<HTMLDivElement>): boolean {
+  if (event.key === "Enter") {
+    return true;
+  }
+  return event.key === " ";
+}
+
+function MermaidDiagramView({ render }: { render: DiagramRender }) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
-    <div
-      className="chat-markdown-mermaid flex max-w-full justify-center overflow-x-auto rounded-[var(--radius)] p-3"
-      style={{ backgroundColor: render.surface }}
-      // Mermaid sanitizes the returned SVG under `securityLevel: "strict"`.
-      dangerouslySetInnerHTML={{ __html: render.svg }}
-    />
+    <>
+      <div
+        className="chat-markdown-mermaid flex max-w-full cursor-zoom-in justify-center overflow-x-auto rounded-[var(--radius)] p-3"
+        style={{ backgroundColor: render.surface }}
+        role="button"
+        tabIndex={0}
+        aria-label="Expand diagram"
+        onClick={() => setExpanded(true)}
+        onKeyDown={(event) => {
+          if (!isActivationKey(event)) {
+            return;
+          }
+          event.preventDefault();
+          setExpanded(true);
+        }}
+        // Mermaid sanitizes the returned SVG under `securityLevel: "strict"`.
+        dangerouslySetInnerHTML={{ __html: render.svg }}
+      />
+      {expanded ? (
+        <MermaidDiagramDialog render={render} onClose={() => setExpanded(false)} />
+      ) : null}
+    </>
+  );
+}
+
+/** The same SVG at up to the window width. Mermaid's inline max-width stops it past its natural size. */
+export function MermaidDiagramDialog({
+  render,
+  onClose,
+}: {
+  render: DiagramRender;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+    >
+      <DialogPopup
+        variant="media"
+        bottomStickOnMobile={false}
+        viewportClassName="grid-rows-1 place-items-center [-webkit-app-region:no-drag]"
+        className="row-start-1 w-[92vw] max-w-[92vw]"
+      >
+        <DialogTitle className="sr-only">Expanded diagram</DialogTitle>
+        <div
+          className="chat-markdown-mermaid flex max-h-[92vh] justify-center overflow-auto rounded-[var(--radius)] p-4"
+          style={{ backgroundColor: render.surface }}
+          // Same sanitized SVG as the inline view.
+          dangerouslySetInnerHTML={{ __html: render.svg }}
+        />
+      </DialogPopup>
+    </Dialog>
   );
 }
