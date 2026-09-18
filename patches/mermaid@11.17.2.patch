@@ -1,0 +1,14 @@
+diff --git a/dist/chunks/mermaid.core/chunk-GMAD6QVW.mjs b/dist/chunks/mermaid.core/chunk-GMAD6QVW.mjs
+index 99dd1942086bd11492ebeb3672a1e57b41d20e77..d5cedec252d9ed3d27843c3fbd1208ce5c1dfe20 100644
+--- a/dist/chunks/mermaid.core/chunk-GMAD6QVW.mjs
++++ b/dist/chunks/mermaid.core/chunk-GMAD6QVW.mjs
+@@ -485,7 +485,8 @@ async function addHtmlSpan(element, node, width, classes, addBackground = false,
+     div.attr("class", "labelBkg");
+   }
+   const bbox = await fastdom_default.measure(() => div.node().getBoundingClientRect());
+-  if (bbox.width === width) {
++  // A fractional device scale snaps 200px to 199.99px, so `===` never wrapped.
++  if (width - bbox.width < 1) {
+     div.style("display", "table");
+     div.style("white-space", "break-spaces");
+     div.style("width", width + "px");
