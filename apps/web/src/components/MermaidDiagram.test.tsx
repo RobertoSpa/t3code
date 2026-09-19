@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { isCompleteMermaidFenceAt, isMermaidFenceLanguage } from "./ChatMarkdown";
-import { mermaidConfig } from "./MermaidDiagram";
+import {
+  DIAGRAM_SCALE_MAX,
+  DIAGRAM_VIEWPORT_HOME,
+  diagramViewportZoom,
+  mermaidConfig,
+  wheelZoomFactor,
+} from "./MermaidDiagram";
 
 describe("mermaidConfig", () => {
   it("keeps the security fields on every theme", () => {
@@ -75,5 +81,28 @@ describe("isCompleteMermaidFenceAt", () => {
   it("rejects a non-mermaid fence and a negative offset", () => {
     expect(isCompleteMermaidFenceAt("```ts\nconst a = 1;\n```\n", 0)).toBe(false);
     expect(isCompleteMermaidFenceAt("```mermaid\nA\n```\n", -1)).toBe(false);
+  });
+});
+
+describe("diagramViewportZoom", () => {
+  it("keeps the point under the cursor fixed", () => {
+    const start = { scale: 1, x: -20, y: 10 };
+    const zoomed = diagramViewportZoom(start, 100, 50, 2);
+    // A point at viewport (100, 50) maps to the same diagram point before and after.
+    expect((100 - start.x) / start.scale).toBeCloseTo((100 - zoomed.x) / zoomed.scale);
+    expect((50 - start.y) / start.scale).toBeCloseTo((50 - zoomed.y) / zoomed.scale);
+    expect(zoomed.scale).toBe(2);
+  });
+
+  it("clamps at the scale limit and stops moving there", () => {
+    const atMax = diagramViewportZoom(DIAGRAM_VIEWPORT_HOME, 0, 0, DIAGRAM_SCALE_MAX);
+    const pastMax = diagramViewportZoom(atMax, 40, 40, 2);
+    expect(pastMax).toEqual(atMax);
+  });
+
+  it("maps a wheel notch up to zoom in and bounds a large trackpad delta", () => {
+    expect(wheelZoomFactor(-100)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(100)).toBeLessThan(1);
+    expect(wheelZoomFactor(5000)).toBe(wheelZoomFactor(100));
   });
 });

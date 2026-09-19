@@ -1,4 +1,13 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import type { MermaidConfig, RenderResult } from "mermaid";
 import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
 
@@ -375,7 +384,148 @@ function MermaidDiagramView({ render }: { render: DiagramRender }) {
   );
 }
 
-/** The same SVG at up to the window width. Mermaid's inline max-width stops it past its natural size. */
+function assert(condition: boolean, message: string): void {
+  if (!condition) {
+    throw new Error(`MermaidDiagram: ${message}`);
+  }
+}
+
+/** Position of the diagram inside the dialog viewport. `x` and `y` are CSS pixels of translation. */
+export interface DiagramViewport {
+  scale: number;
+  x: number;
+  y: number;
+}
+
+export const DIAGRAM_VIEWPORT_HOME: DiagramViewport = { scale: 1, x: 0, y: 0 };
+export const DIAGRAM_SCALE_MIN = 0.5;
+export const DIAGRAM_SCALE_MAX = 8;
+// One mouse-wheel notch is deltaY 100, so a notch zooms by about 1.22x.
+const WHEEL_DELTA_PER_E = 500;
+const WHEEL_DELTA_MAX = 100;
+
+/** Zooms around `pivot` (viewport pixels) so the point under the cursor stays put. Exported for tests. */
+export function diagramViewportZoom(
+  viewport: DiagramViewport,
+  pivotX: number,
+  pivotY: number,
+  factor: number,
+): DiagramViewport {
+  assert(viewport.scale >= DIAGRAM_SCALE_MIN, "scale below minimum");
+  assert(viewport.scale <= DIAGRAM_SCALE_MAX, "scale above maximum");
+  assert(factor > 0, "zoom factor must be positive");
+  const scale = Math.min(DIAGRAM_SCALE_MAX, Math.max(DIAGRAM_SCALE_MIN, viewport.scale * factor));
+  const ratio = scale / viewport.scale;
+  const result = {
+    scale,
+    x: pivotX - (pivotX - viewport.x) * ratio,
+    y: pivotY - (pivotY - viewport.y) * ratio,
+  };
+  assert(result.scale >= DIAGRAM_SCALE_MIN, "result scale below minimum");
+  assert(result.scale <= DIAGRAM_SCALE_MAX, "result scale above maximum");
+  return result;
+}
+
+/** Wheel deltaY to a zoom factor. Trackpads send many small deltas, wheels one big one per notch. */
+export function wheelZoomFactor(deltaY: number): number {
+  assert(Number.isFinite(deltaY), "deltaY must be finite");
+  const bounded = Math.max(-WHEEL_DELTA_MAX, Math.min(WHEEL_DELTA_MAX, deltaY));
+  const factor = Math.exp(-bounded / WHEEL_DELTA_PER_E);
+  assert(factor > 0, "factor must be positive");
+  return factor;
+}
+
+interface DragState {
+  pointerId: number;
+  lastX: number;
+  lastY: number;
+}
+
+// React registers wheel listeners as passive, so preventDefault needs a native one.
+// A callback ref, not an effect: the dialog portal mounts the host after the first commit.
+function useDiagramWheelZoom(
+  onZoom: (pivotX: number, pivotY: number, factor: number) => void,
+): (host: HTMLDivElement | null) => (() => void) | undefined {
+  return useCallback(
+    (host: HTMLDivElement | null) => {
+      if (host === null) {
+        return undefined;
+      }
+      const onWheel = (event: WheelEvent) => {
+        event.preventDefault();
+        const bounds = host.getBoundingClientRect();
+        onZoom(
+          event.clientX - bounds.left,
+          event.clientY - bounds.top,
+          wheelZoomFactor(event.deltaY),
+        );
+      };
+      host.addEventListener("wheel", onWheel, { passive: false });
+      return () => host.removeEventListener("wheel", onWheel);
+    },
+    [onZoom],
+  );
+}
+
+/** Left-button drag. Pointer capture keeps the drag alive when the cursor leaves the host. */
+function useDiagramDrag(onPan: (deltaX: number, deltaY: number) => void) {
+  const dragRef = useRef<DragState | null>(null);
+
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+    assert(dragRef.current === null, "drag started while another drag is active");
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = { pointerId: event.pointerId, lastX: event.clientX, lastY: event.clientY };
+  };
+  const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (drag === null) {
+      return;
+    }
+    assert(drag.pointerId === event.pointerId, "move from a pointer that is not dragging");
+    onPan(event.clientX - drag.lastX, event.clientY - drag.lastY);
+    drag.lastX = event.clientX;
+    drag.lastY = event.clientY;
+  };
+  const onPointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (drag === null) {
+      return;
+    }
+    assert(drag.pointerId === event.pointerId, "end from a pointer that is not dragging");
+    dragRef.current = null;
+  };
+
+  return { onPointerDown, onPointerMove, onPointerUp: onPointerEnd, onPointerCancel: onPointerEnd };
+}
+
+function useDiagramPanZoom() {
+  const [viewport, setViewport] = useState<DiagramViewport>(DIAGRAM_VIEWPORT_HOME);
+
+  const attachHost = useDiagramWheelZoom(
+    useCallback((pivotX: number, pivotY: number, factor: number) => {
+      setViewport((current) => diagramViewportZoom(current, pivotX, pivotY, factor));
+    }, []),
+  );
+  const drag = useDiagramDrag((deltaX, deltaY) => {
+    setViewport((current) => ({ ...current, x: current.x + deltaX, y: current.y + deltaY }));
+  });
+
+  assert(viewport.scale >= DIAGRAM_SCALE_MIN, "viewport scale below minimum");
+  assert(viewport.scale <= DIAGRAM_SCALE_MAX, "viewport scale above maximum");
+  return {
+    attachHost,
+    ...drag,
+    style: {
+      transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
+      transformOrigin: "0 0",
+    },
+  };
+}
+
+/** The same SVG at up to the window width. Wheel zooms around the cursor, click and drag pans. */
 export function MermaidDiagramDialog({
   render,
   onClose,
@@ -383,6 +533,7 @@ export function MermaidDiagramDialog({
   render: DiagramRender;
   onClose: () => void;
 }) {
+  const { attachHost, style, ...pointer } = useDiagramPanZoom();
   return (
     <Dialog
       open
@@ -400,11 +551,18 @@ export function MermaidDiagramDialog({
       >
         <DialogTitle className="sr-only">Expanded diagram</DialogTitle>
         <div
-          className="chat-markdown-mermaid flex max-h-[92vh] justify-center overflow-auto rounded-[var(--radius)] p-4"
+          ref={attachHost}
+          className="h-[92vh] cursor-grab select-none overflow-hidden rounded-[var(--radius)] active:cursor-grabbing"
           style={{ backgroundColor: render.surface }}
-          // Same sanitized SVG as the inline view.
-          dangerouslySetInnerHTML={{ __html: render.svg }}
-        />
+          {...pointer}
+        >
+          <div
+            className="chat-markdown-mermaid flex justify-center p-4"
+            style={style}
+            // Same sanitized SVG as the inline view.
+            dangerouslySetInnerHTML={{ __html: render.svg }}
+          />
+        </div>
       </DialogPopup>
     </Dialog>
   );
